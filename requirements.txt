@@ -1,0 +1,5 @@
+flask>=3.0,<4
+requests>=2.32,<3
+beautifulsoup4>=4.12,<5
+cachetools>=5,<7
+waitress>=3,<4
