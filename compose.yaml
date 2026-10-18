@@ -1,0 +1,10 @@
+services:
+  stvr-stremio:
+    build: .
+    container_name: stvr-stremio
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7000:7000"
+    mem_limit: 256m
+    security_opt:
+      - no-new-privileges:true
