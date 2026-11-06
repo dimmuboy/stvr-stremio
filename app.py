@@ -21,16 +21,19 @@ session = requests.Session()
 session.headers.update({"User-Agent": "Mozilla/5.0 (compatible; STVR-Stremio/0.1)"})
 
 
-def fetch(path, as_json=False):
+def fetch(path, as_json=False, use_cache=True):
     url = urljoin(BASE, path)
     if not url.startswith(BASE + "/"):
         raise ValueError("Unsupported STVR URL")
     key = (url, as_json)
-    if key not in cache:
-        response = session.get(url, timeout=15)
-        response.raise_for_status()
-        cache[key] = response.json() if as_json else response.text
-    return cache[key]
+    if use_cache and key in cache:
+        return cache[key]
+    response = session.get(url, timeout=15)
+    response.raise_for_status()
+    result = response.json() if as_json else response.text
+    if use_cache:
+        cache[key] = result
+    return result
 
 
 def encode(value):
@@ -89,6 +92,7 @@ def episodes(path):
     if not selected or not selected.isdigit():
         selected = node
     results = []
+    seen_ids = set()
     page_num = 1
     while page_num <= 20:
         data = fetch(f"/json/tv/archiv?e=1&archive=1&p={page_num}&l=1000&o=desc&s={selected}", as_json=True)
@@ -97,10 +101,14 @@ def episodes(path):
             video_id = str(program_data.get("ID") or "")
             if not video_id.isdigit():
                 continue
+            if video_id in seen_ids:
+                app.logger.warning("Duplicate STVR video ID %s in show %s; omitting ambiguous episode", video_id, path)
+                continue
+            seen_ids.add(video_id)
             air = program_data.get("air") or ""
             video = {
                 "id": f"stvrvideo:{video_id}",
-                "title": program_data.get("name") or air or "Epizóda",
+                "title": (program_data.get("name") or "Epizóda") + (f" ({air})" if air else ""),
                 "released": air.replace(" ", "T", 1) + ":00Z" if re.fullmatch(r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}", air) else None,
                 "overview": program_data.get("description") or program_data.get("synopsis") or "",
             }
@@ -112,11 +120,22 @@ def episodes(path):
         if not programs or (total and page_num * 1000 >= total) or len(programs) < 1000:
             break
         page_num += 1
+    # Assign stable episode numbers in chronological order, within each broadcast year.
+    # Stremio clients can otherwise collapse episodes without season/episode metadata.
+    by_year = {}
+    for video in results:
+        air = video.get("released") or ""
+        year = int(air[:4]) if re.match(r"^\\d{4}-", air) else 0
+        by_year.setdefault(year, []).append(video)
+    for year, year_videos in by_year.items():
+        for number, video in enumerate(sorted(year_videos, key=lambda v: (v.get("released", ""), v["id"])), 1):
+            video["season"] = year if year else 1
+            video["episode"] = number
     return results
 
 
 MANIFEST = {
-    "id": "community.stvr.archive", "version": "0.1.0", "name": "STVR Archive",
+    "id": "community.stvr.archive", "version": "0.1.1", "name": "STVR Archive",
     "description": "Unofficial STVR television archive. Based on research from Kodi RTVS addon by Maros Ondrasek and Jastrab.",
     "resources": ["catalog", "meta", "stream"], "types": ["series"],
     "idPrefixes": ["stvr:", "stvrvideo:"],
@@ -163,7 +182,7 @@ def stream(video_id):
     if not re.fullmatch(r"stvrvideo:\d+", video_id):
         return jsonify({"streams": []})
     clip_id = video_id.split(":", 1)[1]
-    data = fetch(f"/json/archive5f.json?id={clip_id}", as_json=True)
+    data = fetch(f"/json/archive5f.json?id={clip_id}", as_json=True, use_cache=False)
     sources = (data.get("clip") or {}).get("sources") or []
     streams = []
     for source in sources:
