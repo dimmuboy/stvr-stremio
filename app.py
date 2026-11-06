@@ -125,7 +125,7 @@ def episodes(path):
     by_year = {}
     for video in results:
         air = video.get("released") or ""
-        year = int(air[:4]) if re.match(r"^\\d{4}-", air) else 0
+        year = int(air[:4]) if re.match(r"^\d{4}-", air) else 0
         by_year.setdefault(year, []).append(video)
     for year, year_videos in by_year.items():
         for number, video in enumerate(sorted(year_videos, key=lambda v: (v.get("released", ""), v["id"])), 1):
